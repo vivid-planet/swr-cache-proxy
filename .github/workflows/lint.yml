@@ -1,0 +1,39 @@
+name: Lint
+
+on:
+    pull_request:
+        types:
+            - opened
+            - synchronize
+            - reopened
+            - closed
+        branches:
+            - main
+    push:
+        branches:
+            - main
+
+jobs:
+    lint:
+        name: Lint
+        runs-on: ubuntu-latest
+        steps:
+            - run: echo "${{ github.actor }}"
+
+            - uses: actions/checkout@v3
+              with:
+                  token: ${{ secrets.GITHUB_TOKEN }}
+            - run: |
+                  git config user.name github-actions
+                  git config user.email github-actions@github.com
+
+            - name: Install Node.js
+              uses: actions/setup-node@v2
+              with:
+                node-version: '18'
+
+            - name: Install dependencies
+              run: npm install
+
+            - name: Run ESLint
+              run: npm run lint
