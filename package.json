@@ -3,7 +3,7 @@
     "license": "BSD-2-Clause",
     "scripts": {
         "build": "$npm_execpath run clean && tsc -p tsconfig.build.json",
-        "clean": "rimraf lib",
+        "clean": "rimraf dist",
         "dev": "tsc --watch --preserveWatchOutput -p tsconfig.build.json",
         "lint": "run-p lint:eslint lint:tsc",
         "lint:eslint": "eslint --max-warnings 0 src/ package.json",
@@ -13,6 +13,7 @@
         "test:watch": "jest --watch"
     },
     "dependencies": {
+        "commander": "^11.0.0",
         "express": "^4.18.2",
         "fs-extra": "^11.1.1",
         "typescript": "^5.2.2"
