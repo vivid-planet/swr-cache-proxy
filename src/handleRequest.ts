@@ -1,9 +1,6 @@
 import { Request, Response } from "express";
 
-import { CacheBackend } from "./cache";
-
-const revalidateAfter = 5 * 60; // todo infer from cache-control header
-const maxAge = 24 * 60 * 60; // todo infer from cache-control header
+import { CacheBackend, parseMeta } from "./cache";
 
 interface Options {
     origin: string;
@@ -13,33 +10,45 @@ interface Options {
 export async function handleRequest(req: Request, res: Response, { origin, cache }: Options) {
     const cacheKey = req.url;
 
-    // Check if the response is cached
-    const mtime = await cache.getMtime(cacheKey);
-    if (mtime && new Date().getTime() - mtime.getTime() < 1000 * maxAge) {
+    const cacheEntry = await cache.get(cacheKey);
+    const cacheBody = cacheEntry ? cacheEntry[0] : null;
+    const cacheMeta = cacheEntry ? cacheEntry[1] : null;
+    const age = cacheMeta ? new Date().getTime() - cacheMeta.mtime : null;
+    //console.log("request", req.url, age, cacheMeta);
+
+    if (age && cacheMeta && (age < cacheMeta.maxAge || (cacheMeta.staleWhileRevalidate && age < cacheMeta.staleWhileRevalidate))) {
         console.log("serving from cache", req.url);
-        const cachedResponse = await cache.get(cacheKey);
-        console.log(cachedResponse);
+        const shouldRevalidate = cacheMeta.staleWhileRevalidate && age > cacheMeta.maxAge;
+        if (shouldRevalidate) {
+            res.setHeader("X-Cache", "HIT, REVALIDATE");
+        } else {
+            res.setHeader("X-Cache", "HIT");
+        }
         //res.status(200);
-        res.send(cachedResponse);
+
+        res.send(cacheBody);
+        res.end();
 
         // Asynchronously revalidate the cache in the background
-        (async () => {
-            if (!mtime || new Date().getTime() - mtime.getTime() > 1000 * revalidateAfter) {
-                console.log("async refresh", req.url);
-                const freshResponse = await fetch(`${origin}${req.url}`, {
-                    method: req.method,
-                    //headers: req.headers,
-                    body: req.method === "GET" ? undefined : req.body,
-                });
+        if (shouldRevalidate) {
+            console.log("async refresh", req.url);
+            const freshResponse = await fetch(`${origin}${req.url}`, {
+                method: req.method,
+                //headers: req.headers,
+                body: req.method === "GET" ? undefined : req.body,
+            });
 
-                const freshResponseBody = await freshResponse.text();
+            const freshResponseBody = await freshResponse.text();
 
-                // Update the cache with the fresh response
-                cache.set(cacheKey, freshResponseBody); //don't await
+            // Update the cache with the fresh response
+            const meta = parseMeta(freshResponse);
+            if (meta) {
+                //if null it's uncachable
+                cache.set(cacheKey, freshResponseBody, meta); //don't await
             }
-        })();
+        }
     } else {
-        console.log("fetching", req.url);
+        console.log("serving live", req.url);
 
         // Fetch the response from the fixed target URL
         const response = await fetch(`${origin}${req.url}`, {
@@ -51,11 +60,17 @@ export async function handleRequest(req: Request, res: Response, { origin, cache
         const responseBody = await response.text();
 
         // Cache the response
-        cache.set(cacheKey, responseBody); //don't await
+        const meta = parseMeta(response);
+        if (meta) {
+            //if null it's uncachable
+            cache.set(cacheKey, responseBody, meta); //don't await
+        }
 
+        res.setHeader("X-Cache", "MISS");
         // Send the response to the client
         //res.status(response.status);
         //res.set(response.headers);
         res.send(responseBody);
+        res.end();
     }
 }

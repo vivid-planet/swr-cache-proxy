@@ -9,6 +9,7 @@ app.all("/hello", async (req, res) => {
 
 let count = 0;
 app.all("/count", async (req, res) => {
+    res.appendHeader("Cache-Control", "max-age=1, stale-while-revalidate=2");
     res.send(String(count++));
 });
 
