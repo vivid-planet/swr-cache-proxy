@@ -73,4 +73,34 @@ describe("Proxy Server E2E Tests", () => {
         expect(res.status).toBe(200);
         expect(res.text).toBe("hello");
     });
+    it("origin count endpoint counts", async () => {
+        {
+            // first request
+            const res = await request("http://localhost:3001").get("/count");
+            expect(res.status).toBe(200);
+            expect(res.text).toBe("0");
+        }
+
+        {
+            // second request
+            const res = await request("http://localhost:3001").get("/count");
+            expect(res.status).toBe(200);
+            expect(res.text).toBe("1");
+        }
+    });
+    it("count requests should cache", async () => {
+        {
+            // first request
+            const res = await request("http://localhost:3000").get("/count");
+            expect(res.status).toBe(200);
+            expect(res.text).toBe("0");
+        }
+
+        {
+            // second request
+            const res = await request("http://localhost:3000").get("/count");
+            expect(res.status).toBe(200);
+            expect(res.text).toBe("0");
+        }
+    });
 });
