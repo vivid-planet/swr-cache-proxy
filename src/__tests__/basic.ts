@@ -28,7 +28,7 @@ beforeAll(async () => {
 
     {
         console.log("starting proxy process");
-        proxyServer = spawn("node", ["./dist/index.js"], { stdio: "inherit" });
+        proxyServer = spawn("node", ["./dist/index.js", "--port", "3000", "http://localhost:3001"], { stdio: "inherit" });
 
         proxyServer.on("error", (err: unknown) => {
             console.error("Error starting proxy server:", err);
