@@ -1,7 +1,7 @@
 import { program } from "commander";
 import express from "express";
-import fs from "fs-extra";
 
+import { FilesystemCacheBackend } from "./cache";
 import { handleRequest } from "./handleRequest";
 
 program
@@ -11,12 +11,12 @@ program
     .option("--cacheDir <dir>", "directory cache files will be written into", "cache")
     .action((origin: string, { port, cacheDir }: { port: string; cacheDir: string }) => {
         // Ensure the cache directory exists
-        fs.ensureDirSync(cacheDir);
+        const cache = new FilesystemCacheBackend(cacheDir);
 
         const app = express();
 
         app.all("*", (req, res) => {
-            return handleRequest(req, res, { origin, cacheDir });
+            return handleRequest(req, res, { origin, cache });
         });
 
         console.log(`Starting proxy Server`);

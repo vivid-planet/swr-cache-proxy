@@ -1,42 +1,30 @@
 import { Request, Response } from "express";
-import fs from "fs-extra";
-import path from "path";
+
+import { CacheBackend } from "./cache";
 
 const revalidateAfter = 5 * 60; // todo infer from cache-control header
 const maxAge = 24 * 60 * 60; // todo infer from cache-control header
 
-// Define a function to generate a cache key from the request URL
-function getCacheKey(url: string): string {
-    return encodeURIComponent(url);
-}
-
-async function isCacheFileValid(cacheFilePath: string) {
-    if (!(await fs.existsSync(cacheFilePath))) return false;
-    const stat = await fs.stat(cacheFilePath);
-    if (new Date().getTime() - stat.mtime.getTime() > 1000 * maxAge) return false;
-    return true;
-}
-
 interface Options {
     origin: string;
-    cacheDir: string;
+    cache: CacheBackend;
 }
 
-export async function handleRequest(req: Request, res: Response, { origin, cacheDir }: Options) {
-    const cacheKey = getCacheKey(req.url);
-    const cacheFilePath = path.join(cacheDir, cacheKey);
+export async function handleRequest(req: Request, res: Response, { origin, cache }: Options) {
+    const cacheKey = req.url;
 
     // Check if the response is cached
-    if (await isCacheFileValid(cacheFilePath)) {
+    const mtime = await cache.getMtime(cacheKey);
+    if (mtime && new Date().getTime() - mtime.getTime() < 1000 * maxAge) {
         console.log("serving from cache", req.url);
-        const cachedResponse = await fs.readFile(cacheFilePath, "utf-8");
+        const cachedResponse = await cache.get(cacheKey);
+        console.log(cachedResponse);
         //res.status(200);
         res.send(cachedResponse);
 
         // Asynchronously revalidate the cache in the background
         (async () => {
-            const stat = await fs.stat(cacheFilePath);
-            if (new Date().getTime() - stat.mtime.getTime() > 1000 * revalidateAfter) {
+            if (!mtime || new Date().getTime() - mtime.getTime() > 1000 * revalidateAfter) {
                 console.log("async refresh", req.url);
                 const freshResponse = await fetch(`${origin}${req.url}`, {
                     method: req.method,
@@ -47,7 +35,7 @@ export async function handleRequest(req: Request, res: Response, { origin, cache
                 const freshResponseBody = await freshResponse.text();
 
                 // Update the cache with the fresh response
-                await fs.writeFile(cacheFilePath, freshResponseBody);
+                cache.set(cacheKey, freshResponseBody); //don't await
             }
         })();
     } else {
@@ -63,7 +51,7 @@ export async function handleRequest(req: Request, res: Response, { origin, cache
         const responseBody = await response.text();
 
         // Cache the response
-        await fs.writeFile(cacheFilePath, responseBody);
+        cache.set(cacheKey, responseBody); //don't await
 
         // Send the response to the client
         //res.status(response.status);
