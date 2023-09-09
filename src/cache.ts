@@ -1,5 +1,10 @@
+import { ReadableStream } from "node:stream/web";
+
 import fs from "fs-extra";
 import path from "path";
+import { Readable } from "stream";
+import { finished } from "stream/promises";
+import { Headers, Response } from "undici";
 
 export interface CacheMeta {
     maxAge: number;
@@ -41,25 +46,34 @@ export function parseMeta(res: Response): CacheMeta | null {
 }
 
 export interface CacheBackend {
-    get(key: string): Promise<[string, CacheMetaWithMtime] | null>;
-    set(key: string, body: string, meta: CacheMeta): Promise<void>;
+    get(key: string): Promise<[CacheMetaWithMtime, ReadableStream | null] | null>;
+    set(key: string, body: ReadableStream | null, meta: CacheMeta): Promise<void>;
 }
 
 export class FilesystemCacheBackend implements CacheBackend {
     constructor(private cacheDir: string) {
         fs.ensureDirSync(cacheDir);
     }
-    async get(key: string): Promise<[string, CacheMetaWithMtime] | null> {
+    async get(key: string): Promise<[CacheMetaWithMtime, ReadableStream | null] | null> {
         const cacheFilePath = path.join(this.cacheDir, encodeURIComponent(key));
-        if (!(await fs.exists(cacheFilePath))) return null;
-        const body = await fs.readFile(cacheFilePath, "utf-8"); //TODO streaming, error handling;
-        const meta = await fs.readFile(`${cacheFilePath}--meta`, "utf-8");
-        return [body, JSON.parse(meta)];
+        if (!(await fs.exists(`${cacheFilePath}--meta`))) return null;
+
+        const meta = JSON.parse(await fs.readFile(`${cacheFilePath}--meta`, "utf-8"));
+        let body: ReadableStream | null = null;
+        if (meta.hasBody) {
+            const fileStream = fs.createReadStream(cacheFilePath, { flags: "r" });
+            body = Readable.toWeb(fileStream);
+        }
+        return [meta, body];
     }
-    async set(key: string, body: string, meta: CacheMeta): Promise<void> {
+    async set(key: string, body: ReadableStream | null, meta: CacheMeta): Promise<void> {
         const cacheFilePath = path.join(this.cacheDir, encodeURIComponent(key));
         // console.log("writing cache", cacheFilePath, { ...meta, mtime: new Date().getTime() });
-        await fs.writeFile(`${cacheFilePath}--meta`, JSON.stringify({ ...meta, mtime: new Date().getTime() }));
-        return fs.writeFile(cacheFilePath, body); //TODO streaming, error handling
+        await fs.writeFile(`${cacheFilePath}--meta`, JSON.stringify({ ...meta, mtime: new Date().getTime(), hasBody: !!body }));
+        //TODO error handling
+        if (body) {
+            const fileStream = fs.createWriteStream(cacheFilePath, { flags: "w" });
+            await finished(Readable.fromWeb(body).pipe(fileStream));
+        }
     }
 }

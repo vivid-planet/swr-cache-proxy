@@ -1,5 +1,5 @@
 import { program } from "commander";
-import express from "express";
+import http from "http";
 
 import { FilesystemCacheBackend } from "./cache";
 import { handleRequest } from "./handleRequest";
@@ -13,14 +13,10 @@ program
         // Ensure the cache directory exists
         const cache = new FilesystemCacheBackend(cacheDir);
 
-        const app = express();
-
-        app.all("*", (req, res) => {
-            return handleRequest(req, res, { origin, cache });
-        });
-
         console.log(`Starting proxy Server`);
-        app.listen(port, () => {
+        http.createServer(function (req, res) {
+            return handleRequest(req, res, { origin, cache });
+        }).listen(port, () => {
             console.log(`Proxy server is running on port ${port}`);
         });
     })
