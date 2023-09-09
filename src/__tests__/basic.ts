@@ -1,5 +1,6 @@
 import { ChildProcess, spawn } from "child_process";
 import fs from "fs-extra";
+import net from "net";
 import { getPorts as getPortsNonPromise, PortFinderOptions } from "portfinder";
 import request from "supertest";
 
@@ -14,6 +15,27 @@ function getPorts(count: number, options: PortFinderOptions = {}): Promise<numbe
             }
             resolve(ports);
         });
+    });
+}
+
+async function waitForPort(port: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+        const tryConnect = () => {
+            const socket = new net.Socket();
+            socket.connect({ port, host: "localhost" }, () => {
+                socket.end();
+                resolve();
+            });
+
+            socket.on("error", (error) => {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                if ((error as any).code === "ECONNREFUSED") {
+                    setTimeout(tryConnect, 50);
+                }
+            });
+        };
+
+        tryConnect();
     });
 }
 
@@ -57,8 +79,8 @@ beforeEach(async () => {
             }
         });
     }
-
-    await timeout(2000); // Wait for servers to start
+    await waitForPort(proxyServerPort);
+    await waitForPort(testOriginServerPort);
 });
 
 afterEach(async () => {
@@ -131,13 +153,14 @@ describe("Proxy Server E2E Tests", () => {
             expect(res.text).toBe("0");
             expect(res.header["x-cache"]).toBe("MISS");
         }
-        await timeout(1000);
+        await timeout(1100);
         {
             // second request, triggers revalidate in background and gets stale response
             const res = await request(`http://localhost:${proxyServerPort}`).get("/count");
             expect(res.status).toBe(200);
             expect(res.text).toBe("0");
-            expect(res.header["x-cache"]).toBe("HIT, REVALIDATE");
+            expect(res.header["x-cache"]).toBe("HIT");
+            expect(res.header["x-age"]).toContain("revalidate");
         }
         await timeout(100);
         {
@@ -146,6 +169,7 @@ describe("Proxy Server E2E Tests", () => {
             expect(res.status).toBe(200);
             expect(res.text).toBe("1");
             expect(res.header["x-cache"]).toBe("HIT");
+            expect(res.header["x-age"]).not.toContain("revalidate");
         }
         await timeout(100);
         {
@@ -182,5 +206,90 @@ describe("Proxy Server E2E Tests", () => {
             expect(res.text).toBe("1");
             expect(res.header["x-cache"]).toBe("HIT");
         }
+    });
+
+    it("404 should not cache", async () => {
+        {
+            const res = await request(`http://localhost:${proxyServerPort}`).get("/invalid");
+            expect(res.status).toBe(404);
+            expect(res.header["x-cache"]).toBe("BYPASS");
+        }
+    });
+
+    it("HEAD request should work and cache", async () => {
+        {
+            const res = await request(`http://localhost:${proxyServerPort}`).head("/count");
+            expect(res.status).toBe(200);
+            expect(res.header["x-cache"]).toBe("MISS");
+        }
+        await timeout(100);
+        {
+            const res = await request(`http://localhost:${proxyServerPort}`).head("/count");
+            expect(res.status).toBe(200);
+            expect(res.header["x-cache"]).toBe("HIT");
+        }
+    });
+
+    it("OPTIONS request should work and cache", async () => {
+        {
+            const res = await request(`http://localhost:${proxyServerPort}`).options("/count");
+            expect(res.status).toBe(200);
+            expect(res.header["x-cache"]).toBe("MISS");
+        }
+        await timeout(100);
+        {
+            const res = await request(`http://localhost:${proxyServerPort}`).options("/count");
+            expect(res.status).toBe(200);
+            expect(res.header["x-cache"]).toBe("HIT");
+        }
+    });
+
+    it("POST request should work and not cache", async () => {
+        {
+            const res = await request(`http://localhost:${proxyServerPort}`).post("/count");
+            expect(res.status).toBe(200);
+            expect(res.text).toBe("0");
+            expect(res.header["x-cache"]).toBe("BYPASS");
+        }
+        await timeout(100);
+        {
+            const res = await request(`http://localhost:${proxyServerPort}`).post("/count");
+            expect(res.status).toBe(200);
+            expect(res.text).toBe("1");
+            expect(res.header["x-cache"]).toBe("BYPASS");
+        }
+    });
+
+    it("if-modified-since should work correclty", async () => {
+        let lastModified: string | undefined = undefined;
+        {
+            // first request
+            const res = await request(`http://localhost:${proxyServerPort}`).get("/ifmodified");
+            expect(res.status).toBe(200);
+            expect(res.text).toBe("foo");
+            expect(res.header["x-cache"]).toBe("MISS");
+            expect(res.header["last-modified"]).toBeDefined();
+            lastModified = res.header["last-modified"] as string;
+        }
+        await timeout(100);
+        {
+            // second request with if-modified-since should return 304 not modified
+            const res = await request(`http://localhost:${proxyServerPort}`).get("/ifmodified").set("If-Modified-Since", lastModified);
+            expect(res.status).toBe(304);
+            expect(res.text).toBe("");
+            expect(res.header["x-cache"]).toBe("HIT");
+        }
+    });
+
+    it("via header is set", async () => {
+        const res = await request(`http://localhost:${proxyServerPort}`).get("/hello");
+        expect(res.status).toBe(200);
+        expect(res.header["via"]).toBe("swr-cache-proxy");
+    });
+
+    it("via header is appended to existing one from origin", async () => {
+        const res = await request(`http://localhost:${proxyServerPort}`).get("/via");
+        expect(res.status).toBe(200);
+        expect(res.header["via"]).toBe("foo, swr-cache-proxy");
     });
 });

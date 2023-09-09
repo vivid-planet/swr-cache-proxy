@@ -4,13 +4,21 @@ import path from "path";
 export interface CacheMeta {
     maxAge: number;
     staleWhileRevalidate?: number;
+    headers: Record<string, string>;
+    status: number;
 }
 
 export interface CacheMetaWithMtime extends CacheMeta {
     mtime: number;
 }
 
+export function convertHeadersToObject(headers: Headers): Record<string, string> {
+    return Array.from(headers).reduce((headers, [key, value]) => ({ [key]: value, ...headers }), {} as Record<string, string>);
+}
+
 export function parseMeta(res: Response): CacheMeta | null {
+    if (![200, 301, 302].includes(res.status)) return null;
+
     const cacheControl = res.headers.get("cache-control");
     if (!cacheControl) {
         return null;
@@ -19,13 +27,17 @@ export function parseMeta(res: Response): CacheMeta | null {
     if (!maxAgeMatch) {
         return null;
     }
+
+    const status = res.status;
+    const headers = convertHeadersToObject(res.headers);
+
     const maxAge = parseInt(maxAgeMatch[1], 10) * 1000;
     const staleWhileRevalidateMatch = cacheControl.match(/stale-while-revalidate=(\d+)/);
     if (!staleWhileRevalidateMatch) {
-        return { maxAge };
+        return { maxAge, headers, status };
     }
     const staleWhileRevalidate = parseInt(staleWhileRevalidateMatch[1], 10) * 1000;
-    return { maxAge, staleWhileRevalidate };
+    return { maxAge, staleWhileRevalidate, headers, status };
 }
 
 export interface CacheBackend {
@@ -46,7 +58,7 @@ export class FilesystemCacheBackend implements CacheBackend {
     }
     async set(key: string, body: string, meta: CacheMeta): Promise<void> {
         const cacheFilePath = path.join(this.cacheDir, encodeURIComponent(key));
-        console.log("writing cache", cacheFilePath, { ...meta, mtime: new Date().getTime() });
+        // console.log("writing cache", cacheFilePath, { ...meta, mtime: new Date().getTime() });
         await fs.writeFile(`${cacheFilePath}--meta`, JSON.stringify({ ...meta, mtime: new Date().getTime() }));
         return fs.writeFile(cacheFilePath, body); //TODO streaming, error handling
     }
