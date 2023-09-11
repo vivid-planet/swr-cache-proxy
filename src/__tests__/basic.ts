@@ -1,17 +1,31 @@
 import { ChildProcess, spawn } from "child_process";
 import fs from "fs-extra";
+import { getPorts as getPortsNonPromise, PortFinderOptions } from "portfinder";
 import request from "supertest";
 
 function timeout(ms: number) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
+function getPorts(count: number, options: PortFinderOptions = {}): Promise<number[]> {
+    return new Promise(function (resolve, reject) {
+        getPortsNonPromise(count, options, function (err, ports) {
+            if (err) {
+                return reject(err);
+            }
+            resolve(ports);
+        });
+    });
+}
 
 let testOriginServer: ChildProcess | undefined;
 let proxyServer: ChildProcess | undefined;
+let testOriginServerPort: number | undefined;
+let proxyServerPort: number | undefined;
 
 beforeEach(async () => {
     {
-        testOriginServer = spawn("node", ["./dist/test/test-origin.js"], { stdio: "inherit" });
+        [testOriginServerPort, proxyServerPort] = await getPorts(2);
+        testOriginServer = spawn("node", ["./dist/test/test-origin.js", String(testOriginServerPort)], { stdio: "inherit" });
 
         testOriginServer.on("error", (err: unknown) => {
             console.error("Error starting test-origin server:", err);
@@ -28,7 +42,9 @@ beforeEach(async () => {
     {
         await fs.emptyDir("cache");
 
-        proxyServer = spawn("node", ["./dist/index.js", "--port", "3000", "http://localhost:3001"], { stdio: "inherit" });
+        proxyServer = spawn("node", ["./dist/index.js", "--port", String(proxyServerPort), `http://localhost:${testOriginServerPort}`], {
+            stdio: "inherit",
+        });
 
         proxyServer.on("error", (err: unknown) => {
             console.error("Error starting proxy server:", err);
@@ -69,21 +85,21 @@ afterEach(async () => {
 
 describe("Proxy Server E2E Tests", () => {
     it("should forward GET requests to target server", async () => {
-        const res = await request("http://localhost:3000").get("/hello");
+        const res = await request(`http://localhost:${proxyServerPort}`).get("/hello");
         expect(res.status).toBe(200);
         expect(res.text).toBe("hello");
     });
     it("origin count endpoint counts", async () => {
         {
             // first request
-            const res = await request("http://localhost:3001").get("/count");
+            const res = await request(`http://localhost:${testOriginServerPort}`).get("/count");
             expect(res.status).toBe(200);
             expect(res.text).toBe("0");
         }
         await timeout(100);
         {
             // second request
-            const res = await request("http://localhost:3001").get("/count");
+            const res = await request(`http://localhost:${testOriginServerPort}`).get("/count");
             expect(res.status).toBe(200);
             expect(res.text).toBe("1");
         }
@@ -91,7 +107,7 @@ describe("Proxy Server E2E Tests", () => {
     it("count requests should cache", async () => {
         {
             // first request
-            const res = await request("http://localhost:3000").get("/count");
+            const res = await request(`http://localhost:${proxyServerPort}`).get("/count");
             expect(res.status).toBe(200);
             expect(res.text).toBe("0");
             expect(res.header["x-cache"]).toBe("MISS");
@@ -99,7 +115,7 @@ describe("Proxy Server E2E Tests", () => {
         await timeout(100);
         {
             // second request
-            const res = await request("http://localhost:3000").get("/count");
+            const res = await request(`http://localhost:${proxyServerPort}`).get("/count");
             expect(res.status).toBe(200);
             expect(res.text).toBe("0");
             expect(res.header["x-cache"]).toBe("HIT");
@@ -110,7 +126,7 @@ describe("Proxy Server E2E Tests", () => {
         ///count does have max-age=1, stale-while-revalidate=2
         {
             // first request
-            const res = await request("http://localhost:3000").get("/count");
+            const res = await request(`http://localhost:${proxyServerPort}`).get("/count");
             expect(res.status).toBe(200);
             expect(res.text).toBe("0");
             expect(res.header["x-cache"]).toBe("MISS");
@@ -118,7 +134,7 @@ describe("Proxy Server E2E Tests", () => {
         await timeout(1000);
         {
             // second request, triggers revalidate in background and gets stale response
-            const res = await request("http://localhost:3000").get("/count");
+            const res = await request(`http://localhost:${proxyServerPort}`).get("/count");
             expect(res.status).toBe(200);
             expect(res.text).toBe("0");
             expect(res.header["x-cache"]).toBe("HIT, REVALIDATE");
@@ -126,7 +142,7 @@ describe("Proxy Server E2E Tests", () => {
         await timeout(100);
         {
             // third request, revalidation happend in background, gets fresh response
-            const res = await request("http://localhost:3000").get("/count");
+            const res = await request(`http://localhost:${proxyServerPort}`).get("/count");
             expect(res.status).toBe(200);
             expect(res.text).toBe("1");
             expect(res.header["x-cache"]).toBe("HIT");
@@ -134,7 +150,7 @@ describe("Proxy Server E2E Tests", () => {
         await timeout(100);
         {
             // still cached
-            const res = await request("http://localhost:3000").get("/count");
+            const res = await request(`http://localhost:${proxyServerPort}`).get("/count");
             expect(res.status).toBe(200);
             expect(res.text).toBe("1");
             expect(res.header["x-cache"]).toBe("HIT");
@@ -145,7 +161,7 @@ describe("Proxy Server E2E Tests", () => {
         ///count does have max-age=1, stale-while-revalidate=2
         {
             // first request
-            const res = await request("http://localhost:3000").get("/count");
+            const res = await request(`http://localhost:${proxyServerPort}`).get("/count");
             expect(res.status).toBe(200);
             expect(res.text).toBe("0");
             expect(res.header["x-cache"]).toBe("MISS");
@@ -153,7 +169,7 @@ describe("Proxy Server E2E Tests", () => {
         await timeout(2000);
         {
             // second request, doesn't revalidate as too old, fetch sync
-            const res = await request("http://localhost:3000").get("/count");
+            const res = await request(`http://localhost:${proxyServerPort}`).get("/count");
             expect(res.status).toBe(200);
             expect(res.text).toBe("1");
             expect(res.header["x-cache"]).toBe("MISS");
@@ -161,7 +177,7 @@ describe("Proxy Server E2E Tests", () => {
         await timeout(100);
         {
             // still cached
-            const res = await request("http://localhost:3000").get("/count");
+            const res = await request(`http://localhost:${proxyServerPort}`).get("/count");
             expect(res.status).toBe(200);
             expect(res.text).toBe("1");
             expect(res.header["x-cache"]).toBe("HIT");

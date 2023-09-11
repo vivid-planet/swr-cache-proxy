@@ -1,7 +1,11 @@
 import express from "express";
 
 const app = express();
-const port = 3001;
+const port = parseInt(process.argv[2]);
+if (!port) {
+    console.error("no port specified, pass as first argument");
+    process.exit(1);
+}
 
 app.all("/hello", async (req, res) => {
     res.send("hello");
