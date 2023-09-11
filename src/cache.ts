@@ -51,9 +51,60 @@ export interface CacheBackend {
 }
 
 export class FilesystemCacheBackend implements CacheBackend {
-    constructor(private cacheDir: string) {
-        fs.ensureDirSync(cacheDir);
+    constructor(private cacheDir: string, private sizeLimit: number | null) {
+        //create chacheDir if it doesn't exist
+        fs.mkdir(cacheDir, { recursive: true });
+
+        this.cleanup(); // don't await
+        setInterval(this.cleanup, 1000 * 60 * 15);
     }
+
+    private async cleanup() {
+        console.log("cleanup started");
+        const cleanupStart = new Date().getTime();
+        const stats = {
+            deletedOutdated: 0,
+            deletedOverSizeLimit: 0,
+        };
+        let entries = [];
+        let sumSize = 0;
+        const dir = await fs.opendir(this.cacheDir);
+        for await (const file of dir) {
+            if (file.name.endsWith("--meta")) {
+                const meta = JSON.parse(await fs.readFile(file.path, "utf-8"));
+                const contentFilePath = file.path.substring(0, file.path.length - "--meta".length);
+                if (meta.mtime + meta.maxAge < new Date().getTime()) {
+                    stats.deletedOutdated++;
+                    await fs.unlink(file.path);
+                    if (meta.hasBody) {
+                        await fs.unlink(contentFilePath);
+                    }
+                } else {
+                    const statMeta = await fs.stat(file.path);
+                    let size = statMeta.size;
+                    if (meta.hasBody) {
+                        const statContent = await fs.stat(contentFilePath);
+                        size += statContent.size;
+                    }
+                    sumSize += size;
+                    entries.push({ path: file.path, size, mtime: meta.mtime, hasBody: meta.hasBody });
+                }
+            }
+        }
+        entries = entries.sort((a, b) => b.mtime - a.mtime); // oldest last
+        while (this.sizeLimit && sumSize > this.sizeLimit) {
+            const oldest = entries.pop();
+            if (!oldest) break;
+            stats.deletedOverSizeLimit++;
+            await fs.unlink(oldest.path);
+            if (oldest.hasBody) {
+                await fs.unlink(oldest.path.substring(0, oldest.path.length - "--meta".length));
+            }
+            sumSize -= oldest.size;
+        }
+        console.log("cleanup finished in", new Date().getTime() - cleanupStart, "sec", stats, "entries", entries.length, "size", sumSize);
+    }
+
     async get(key: string): Promise<[CacheMetaWithMtime, ReadableStream | null] | null> {
         const cacheFilePath = path.join(this.cacheDir, encodeURIComponent(key));
         if (!(await fs.exists(`${cacheFilePath}--meta`))) return null;
