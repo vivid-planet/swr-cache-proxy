@@ -1,8 +1,8 @@
 import { ChildProcess, spawn } from "child_process";
 import fs from "fs-extra";
-import net from "net";
 import { getPorts as getPortsNonPromise, PortFinderOptions } from "portfinder";
 import request from "supertest";
+import waitOn from "wait-on";
 
 function timeout(ms: number) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -15,27 +15,6 @@ function getPorts(count: number, options: PortFinderOptions = {}): Promise<numbe
             }
             resolve(ports);
         });
-    });
-}
-
-async function waitForPort(port: number): Promise<void> {
-    return new Promise<void>((resolve) => {
-        const tryConnect = () => {
-            const socket = new net.Socket();
-            socket.connect({ port, host: "localhost" }, () => {
-                socket.end();
-                resolve();
-            });
-
-            socket.on("error", (error) => {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                if ((error as any).code === "ECONNREFUSED") {
-                    setTimeout(tryConnect, 50);
-                }
-            });
-        };
-
-        tryConnect();
     });
 }
 
@@ -79,8 +58,8 @@ beforeEach(async () => {
             }
         });
     }
-    await waitForPort(proxyServerPort);
-    await waitForPort(testOriginServerPort);
+
+    await waitOn({ resources: [`tcp:localhost:${proxyServerPort}`, `tcp:localhost:${testOriginServerPort}`] });
 });
 
 afterEach(async () => {
