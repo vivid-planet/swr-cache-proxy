@@ -28,6 +28,14 @@ app.get("/via", async (req, res) => {
     res.send("foo");
 });
 
+app.all("/long", async (req, res) => {
+    res.appendHeader("Cache-Control", "max-age=60, stale-while-revalidate=120");
+    res.send("long");
+});
+app.all("/long2", async (req, res) => {
+    res.appendHeader("Cache-Control", "max-age=60, stale-while-revalidate=120");
+    res.send("long2");
+});
 app.listen(port, () => {
     console.log(`test origin server is running on port ${port}`);
 });

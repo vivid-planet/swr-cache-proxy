@@ -8,10 +8,11 @@ program
     .name("swr-cache-proxy")
     .argument("<origin>", "Origin server URL")
     .option("--port <port>", "port to listen on", "3000")
+    .option("--cacheSizeLimitHint <megabytes>", "maximum cache size hint", "500")
     .option("--cacheDir <dir>", "directory cache files will be written into", "cache")
-    .action((origin: string, { port, cacheDir }: { port: string; cacheDir: string }) => {
+    .action((origin: string, { port, cacheDir, cacheSizeLimitHint }: { port: string; cacheDir: string; cacheSizeLimitHint: string }) => {
         // Ensure the cache directory exists
-        const cache = new FilesystemCacheBackend(cacheDir);
+        const cache = new FilesystemCacheBackend(cacheDir, parseInt(cacheSizeLimitHint) /* * 1024 * 1024*/);
 
         console.log(`Starting proxy Server`);
         http.createServer(function (req, res) {

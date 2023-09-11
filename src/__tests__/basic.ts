@@ -279,6 +279,35 @@ describe("Proxy Server E2E Tests", () => {
         }
     });
 
+    it("if-none-match should work correclty", async () => {
+        let etag: string | undefined = undefined;
+        {
+            // first request
+            const res = await request(`http://localhost:${proxyServerPort}`).get("/ifmodified");
+            expect(res.status).toBe(200);
+            expect(res.text).toBe("foo");
+            expect(res.header["x-cache"]).toBe("MISS");
+            expect(res.header["etag"]).toBeDefined();
+            etag = res.header["etag"] as string;
+        }
+        await timeout(100);
+        {
+            // second request with if-none-match should return 304 not modified
+            const res = await request(`http://localhost:${proxyServerPort}`).get("/ifmodified").set("If-None-Match", etag);
+            expect(res.status).toBe(304);
+            expect(res.text).toBe("");
+            expect(res.header["x-cache"]).toBe("HIT");
+        }
+        await timeout(2000);
+        {
+            // request with if-none-match should return 304 not modified
+            const res = await request(`http://localhost:${proxyServerPort}`).get("/ifmodified").set("If-None-Match", etag);
+            expect(res.status).toBe(304);
+            expect(res.text).toBe("");
+            expect(res.header["x-cache"]).toBe("MISS");
+        }
+    });
+
     it("via header is set", async () => {
         const res = await request(`http://localhost:${proxyServerPort}`).get("/hello");
         expect(res.status).toBe(200);
