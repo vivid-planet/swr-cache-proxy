@@ -195,17 +195,28 @@ describe("Proxy Server E2E Tests", () => {
         }
     });
 
-    it("HEAD request should work and cache", async () => {
+    it("HEAD request should work and cache for cached response", async () => {
         {
             const res = await request(`http://localhost:${proxyServerPort}`).head("/count");
             expect(res.status).toBe(200);
             expect(res.header["x-cache"]).toBe("MISS");
+            expect(res.text).toBe(undefined);
         }
         await timeout(100);
         {
             const res = await request(`http://localhost:${proxyServerPort}`).head("/count");
             expect(res.status).toBe(200);
             expect(res.header["x-cache"]).toBe("HIT");
+            expect(res.text).toBe(undefined);
+        }
+    });
+
+    it("HEAD request should work for uncached response", async () => {
+        {
+            const res = await request(`http://localhost:${proxyServerPort}`).head("/hello");
+            expect(res.status).toBe(200);
+            expect(res.header["x-cache"]).toBe("BYPASS");
+            expect(res.text).toBe(undefined);
         }
     });
 
@@ -257,6 +268,14 @@ describe("Proxy Server E2E Tests", () => {
             expect(res.status).toBe(304);
             expect(res.text).toBe("");
             expect(res.header["x-cache"]).toBe("HIT");
+        }
+        await timeout(2000);
+        {
+            // request with if-modified-since should return 304 not modified
+            const res = await request(`http://localhost:${proxyServerPort}`).get("/ifmodified").set("If-Modified-Since", lastModified);
+            expect(res.status).toBe(304);
+            expect(res.text).toBe("");
+            expect(res.header["x-cache"]).toBe("MISS");
         }
     });
 
