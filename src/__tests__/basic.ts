@@ -160,7 +160,7 @@ describe("Proxy Server E2E Tests", () => {
         }
     });
 
-    it("count requests should refresh cache after max-age", async () => {
+    it("count requests should miss cache after stale-while-revalidate", async () => {
         ///count does have max-age=1, stale-while-revalidate=2
         {
             // first request
@@ -169,7 +169,7 @@ describe("Proxy Server E2E Tests", () => {
             expect(res.text).toBe("0");
             expect(res.header["x-cache"]).toBe("MISS");
         }
-        await timeout(2000);
+        await timeout(2100);
         {
             // second request, doesn't revalidate as too old, fetch sync
             const res = await request(`http://localhost:${proxyServerPort}`).get("/count");
