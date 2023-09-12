@@ -16,7 +16,14 @@ program
 
         console.log(`Starting proxy Server`);
         http.createServer(function (req, res) {
-            return handleRequest(req, res, { origin, cache });
+            try {
+                handleRequest(req, res, { origin, cache });
+            } catch (err) {
+                console.error(err);
+                res.write("Internal Server Error");
+                res.statusCode = 500;
+                res.end();
+            }
         }).listen(port, () => {
             console.log(`Proxy server is running on port ${port}`);
         });
