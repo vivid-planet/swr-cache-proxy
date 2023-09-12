@@ -143,8 +143,9 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse, {
         }
 
         // Asynchronously revalidate the cache in the background
-        if (shouldRevalidate) {
+        if (shouldRevalidate && !(await cache.isRefreshing(cacheKey))) {
             console.log("async refresh", req.url);
+            await cache.startRefreshing(cacheKey);
 
             const freshResponse = await originFetch(req, { acceptEncoding }, { origin, cache });
 
