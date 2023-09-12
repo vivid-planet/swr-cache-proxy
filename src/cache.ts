@@ -48,6 +48,7 @@ export function parseMeta(res: Response): CacheMeta | null {
 export interface CacheBackend {
     get(key: string): Promise<[CacheMetaWithMtime, ReadableStream | null] | null>;
     set(key: string, body: ReadableStream | null, meta: CacheMeta): Promise<void>;
+    delete(key: string): Promise<void>;
 }
 
 export class FilesystemCacheBackend implements CacheBackend {
@@ -117,14 +118,23 @@ export class FilesystemCacheBackend implements CacheBackend {
         }
         return [meta, body];
     }
+
     async set(key: string, body: ReadableStream | null, meta: CacheMeta): Promise<void> {
         const cacheFilePath = path.join(this.cacheDir, encodeURIComponent(key));
         // console.log("writing cache", cacheFilePath, { ...meta, mtime: new Date().getTime() });
-        await fs.writeFile(`${cacheFilePath}--meta`, JSON.stringify({ ...meta, mtime: new Date().getTime(), hasBody: !!body }));
         //TODO error handling
         if (body) {
             const fileStream = fs.createWriteStream(cacheFilePath, { flags: "w" });
             await finished(Readable.fromWeb(body).pipe(fileStream));
+        }
+        await fs.writeFile(`${cacheFilePath}--meta`, JSON.stringify({ ...meta, mtime: new Date().getTime(), hasBody: !!body }));
+    }
+
+    async delete(key: string): Promise<void> {
+        const cacheFilePath = path.join(this.cacheDir, encodeURIComponent(key));
+        await fs.unlink(`${cacheFilePath}--meta`);
+        if (await fs.exists(cacheFilePath)) {
+            await fs.unlink(cacheFilePath);
         }
     }
 }
