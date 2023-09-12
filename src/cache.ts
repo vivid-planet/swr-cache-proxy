@@ -58,12 +58,21 @@ export class FilesystemCacheBackend implements CacheBackend {
         fs.mkdir(`${cacheDir}/bodies`, { recursive: true });
 
         this.cleanup(); // don't await
-        setInterval(this.cleanup, 1000 * 60 * 15);
+        setInterval(this.cleanup.bind(this), 1000 * 60 * 15);
     }
 
     private async cleanup() {
+        const lastCleanupStarted = (await fs.exists(`${this.cacheDir}/cleanup`))
+            ? parseInt(await fs.readFile(`${this.cacheDir}/cleanup`, "utf-8"))
+            : null;
+        if (lastCleanupStarted && new Date().getTime() - lastCleanupStarted < 1000 * 60 * 15 - 100) {
+            console.log("skipping cleanup, already done by other process within 15 minutes: ", new Date().getTime() - lastCleanupStarted, "ms ago");
+            return;
+        }
+
         console.log("cleanup started");
         const cleanupStart = new Date().getTime();
+        await fs.writeFile(`${this.cacheDir}/cleanup`, cleanupStart.toString());
         const stats = {
             deletedOutdated: 0,
             deletedOverSizeLimit: 0,
@@ -73,6 +82,7 @@ export class FilesystemCacheBackend implements CacheBackend {
         const dir = await fs.opendir(this.cacheDir);
         for await (const file of dir) {
             if (file.isDirectory()) continue;
+            if (file.name.endsWith("cleanup")) continue;
             if (file.name.endsWith("--temp")) continue;
             let meta;
             try {
@@ -122,7 +132,7 @@ export class FilesystemCacheBackend implements CacheBackend {
             await this.deleteCacheFile(oldest.name);
             sumSize -= oldest.size;
         }
-        console.log("cleanup finished in", new Date().getTime() - cleanupStart, "sec", stats, "entries", entries.length, "size", sumSize);
+        console.log("cleanup finished in", new Date().getTime() - cleanupStart, "ms", stats, "entries", entries.length, "size", sumSize);
     }
 
     async get(key: string): Promise<[CacheMetaWithMtime, ReadableStream | null] | null> {
