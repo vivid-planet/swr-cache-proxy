@@ -151,8 +151,11 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse, {
             // Update the cache with the fresh response
             const meta = parseMeta(freshResponse);
             if (meta) {
-                //if null it's uncachable
+                //if not null it's cachable
                 cache.set(cacheKey, freshResponse.body, meta); //don't await
+            } else {
+                //not cacheable anymore (was previously) so delete it
+                cache.delete(cacheKey); //don't await
             }
         }
     } else {
