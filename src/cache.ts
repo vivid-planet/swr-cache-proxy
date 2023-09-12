@@ -55,6 +55,7 @@ export class FilesystemCacheBackend implements CacheBackend {
     constructor(private cacheDir: string, private sizeLimit: number | null) {
         //create chacheDir if it doesn't exist
         fs.mkdir(cacheDir, { recursive: true });
+        fs.mkdir(`${cacheDir}/bodies`, { recursive: true });
 
         this.cleanup(); // don't await
         setInterval(this.cleanup, 1000 * 60 * 15);
@@ -71,25 +72,46 @@ export class FilesystemCacheBackend implements CacheBackend {
         let sumSize = 0;
         const dir = await fs.opendir(this.cacheDir);
         for await (const file of dir) {
-            if (file.name.endsWith("--meta")) {
-                const meta = JSON.parse(await fs.readFile(file.path, "utf-8"));
-                const contentFilePath = file.path.substring(0, file.path.length - "--meta".length);
-                if (meta.mtime + meta.maxAge < new Date().getTime()) {
-                    stats.deletedOutdated++;
-                    await fs.unlink(file.path);
-                    if (meta.hasBody) {
-                        await fs.unlink(contentFilePath);
-                    }
+            if (file.isDirectory()) continue;
+            if (file.name.endsWith("--temp")) continue;
+            let meta;
+            try {
+                meta = await fs.readFile(file.path, "utf-8");
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            } catch (err: any) {
+                if (err.code === "ENOENT") {
+                    // No Entity; file does not exist (can happen in race conditions where other request/process deleted the file)
+                    // continue with next file
+                    continue;
                 } else {
+                    throw err;
+                }
+            }
+            meta = JSON.parse(meta);
+            if (meta.mtime + meta.maxAge < new Date().getTime()) {
+                stats.deletedOutdated++;
+                await this.deleteCacheFile(file.name);
+            } else {
+                let size = 0;
+                try {
                     const statMeta = await fs.stat(file.path);
-                    let size = statMeta.size;
-                    if (meta.hasBody) {
-                        const statContent = await fs.stat(contentFilePath);
+                    size += statMeta.size;
+                    if (meta.body) {
+                        const statContent = await fs.stat(meta.body);
                         size += statContent.size;
                     }
-                    sumSize += size;
-                    entries.push({ path: file.path, size, mtime: meta.mtime, hasBody: meta.hasBody });
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                } catch (err: any) {
+                    if (err.code === "ENOENT") {
+                        // No Entity; file does not exist (can happen in race conditions where other request/process deleted the file)
+                        // continue with next file
+                        continue;
+                    } else {
+                        throw err;
+                    }
                 }
+                sumSize += size;
+                entries.push({ name: file.name, size, mtime: meta.mtime });
             }
         }
         entries = entries.sort((a, b) => b.mtime - a.mtime); // oldest last
@@ -97,10 +119,7 @@ export class FilesystemCacheBackend implements CacheBackend {
             const oldest = entries.pop();
             if (!oldest) break;
             stats.deletedOverSizeLimit++;
-            await fs.unlink(oldest.path);
-            if (oldest.hasBody) {
-                await fs.unlink(oldest.path.substring(0, oldest.path.length - "--meta".length));
-            }
+            await this.deleteCacheFile(oldest.name);
             sumSize -= oldest.size;
         }
         console.log("cleanup finished in", new Date().getTime() - cleanupStart, "sec", stats, "entries", entries.length, "size", sumSize);
@@ -108,33 +127,158 @@ export class FilesystemCacheBackend implements CacheBackend {
 
     async get(key: string): Promise<[CacheMetaWithMtime, ReadableStream | null] | null> {
         const cacheFilePath = path.join(this.cacheDir, encodeURIComponent(key));
-        if (!(await fs.exists(`${cacheFilePath}--meta`))) return null;
 
-        const meta = JSON.parse(await fs.readFile(`${cacheFilePath}--meta`, "utf-8"));
+        let meta;
+        try {
+            meta = await fs.readFile(cacheFilePath, "utf-8");
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } catch (err: any) {
+            if (err.code === "ENOENT") {
+                // No Entity; file does not exist (catch error instead of calling exists before readFile to avoid race conditions)
+                return null;
+            } else {
+                throw err;
+            }
+        }
+        meta = JSON.parse(meta);
+
         let body: ReadableStream | null = null;
-        if (meta.hasBody) {
-            const fileStream = fs.createReadStream(cacheFilePath, { flags: "r" });
+        if (meta.body) {
+            let fileStream: fs.ReadStream;
+            try {
+                fileStream = fs.createReadStream(meta.body, { flags: "r" });
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            } catch (err: any) {
+                if (err.code === "ENOENT") {
+                    // No Entity; file does not exist (can happen in race conditions where other request/process deleted the file)
+                    return null;
+                } else {
+                    throw err;
+                }
+            }
             body = Readable.toWeb(fileStream);
         }
         return [meta, body];
     }
 
-    async set(key: string, body: ReadableStream | null, meta: CacheMeta): Promise<void> {
+    async set(key: string, bodyStream: ReadableStream | null, meta: CacheMeta): Promise<void> {
         const cacheFilePath = path.join(this.cacheDir, encodeURIComponent(key));
-        // console.log("writing cache", cacheFilePath, { ...meta, mtime: new Date().getTime() });
-        //TODO error handling
-        if (body) {
-            const fileStream = fs.createWriteStream(cacheFilePath, { flags: "w" });
-            await finished(Readable.fromWeb(body).pipe(fileStream));
+        let bodyFile = null;
+        const bodyDir = `${this.cacheDir}/bodies/${encodeURIComponent(key)}`;
+        if (bodyStream) {
+            await fs.mkdir(bodyDir, { recursive: true });
+            //generate a unique filename to avoid overwriting the current cache body
+            bodyFile = `${bodyDir}/${Math.random().toString(36).substring(2)}`;
+            let fileStream: fs.WriteStream;
+            try {
+                fileStream = fs.createWriteStream(bodyFile, { flags: "w" });
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            } catch (err: any) {
+                if (err.code === "ENOENT") {
+                    // No Entity; directory does not exist (can happen in very rare race conditions cache entry including body directory was deleted by other request/process)
+                    return;
+                } else {
+                    throw err;
+                }
+            }
+
+            await finished(Readable.fromWeb(bodyStream).pipe(fileStream));
         }
-        await fs.writeFile(`${cacheFilePath}--meta`, JSON.stringify({ ...meta, mtime: new Date().getTime(), hasBody: !!body }));
+
+        //first write into a tempFile
+        const tempFile = `${cacheFilePath}--${Math.random().toString(36).substring(2)}--temp`;
+        await fs.writeFile(tempFile, JSON.stringify({ ...meta, mtime: new Date().getTime(), body: bodyFile }));
+
+        //then rename the tempFile to the actual cache file (=atomic operation)
+        await fs.rename(tempFile, cacheFilePath);
+
+        //after writing new meta file, delete all other (old) body files
+        let dir: fs.Dir;
+        try {
+            dir = await fs.opendir(bodyDir);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } catch (err: any) {
+            if (err.code === "ENOENT") {
+                // No Entity; directory does not exist (can happen when there is no body)
+                // return as nothing to delete
+                return;
+            } else {
+                throw err;
+            }
+        }
+
+        for await (const file of dir) {
+            if (file.path !== bodyFile) {
+                try {
+                    await fs.unlink(file.path);
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                } catch (err: any) {
+                    if (err.code === "ENOENT") {
+                        // No Entity; file does not exist (can happen when in race condition when other request/process deleted the file)
+                        // continue with next file
+                    } else {
+                        throw err;
+                    }
+                }
+            }
+        }
     }
 
     async delete(key: string): Promise<void> {
-        const cacheFilePath = path.join(this.cacheDir, encodeURIComponent(key));
-        await fs.unlink(`${cacheFilePath}--meta`);
-        if (await fs.exists(cacheFilePath)) {
-            await fs.unlink(cacheFilePath);
+        return this.deleteCacheFile(encodeURIComponent(key));
+    }
+
+    private async deleteCacheFile(file: string): Promise<void> {
+        const cacheFilePath = path.join(this.cacheDir, file);
+        const bodyDir = `${this.cacheDir}/bodies/${file}`;
+        try {
+            await fs.unlink(`${cacheFilePath}`);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } catch (err: any) {
+            if (err.code === "ENOENT") {
+                // No Entity; file does not exist (can happen in race conditions where other request/process deleted the file)
+                // return as nothing to delete
+                return;
+            } else {
+                throw err;
+            }
+        }
+        let dir: fs.Dir;
+        try {
+            dir = await fs.opendir(bodyDir);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } catch (err: any) {
+            if (err.code === "ENOENT") {
+                // No Entity; directory does not exist (can happen when there is no body)
+                // return as nothing to delete
+                return;
+            } else {
+                throw err;
+            }
+        }
+        for await (const file of dir) {
+            try {
+                await fs.unlink(file.path);
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            } catch (err: any) {
+                if (err.code === "ENOENT") {
+                    // No Entity; file does not exist (can happen when in race condition when other request/process deleted the file)
+                    // continue with next file
+                } else {
+                    throw err;
+                }
+            }
+        }
+        try {
+            await fs.rmdir(bodyDir);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } catch (err: any) {
+            if (err.code === "ENOENT") {
+                // No Entity; directory does not exist (can happen when in race condition when other request/process deleted the file)
+                // ignore error
+            } else {
+                throw err;
+            }
         }
     }
 }
