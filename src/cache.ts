@@ -49,6 +49,8 @@ export interface CacheBackend {
     get(key: string): Promise<[CacheMetaWithMtime, ReadableStream | null] | null>;
     set(key: string, body: ReadableStream | null, meta: CacheMeta): Promise<void>;
     delete(key: string): Promise<void>;
+    startRefreshing(key: string): Promise<void>;
+    isRefreshing(key: string): Promise<boolean>;
 }
 
 export class FilesystemCacheBackend implements CacheBackend {
@@ -84,32 +86,10 @@ export class FilesystemCacheBackend implements CacheBackend {
             if (file.isDirectory()) continue;
             if (file.name.endsWith("cleanup")) continue;
             if (file.name.endsWith("--temp")) continue;
-            let meta;
-            try {
-                meta = await fs.readFile(file.path, "utf-8");
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            } catch (err: any) {
-                if (err.code === "ENOENT") {
-                    // No Entity; file does not exist (can happen in race conditions where other request/process deleted the file)
-                    // continue with next file
-                    continue;
-                } else {
-                    throw err;
-                }
-            }
-            meta = JSON.parse(meta);
-            if (meta.mtime + meta.maxAge < new Date().getTime()) {
-                stats.deletedOutdated++;
-                await this.deleteCacheFile(file.name);
-            } else {
-                let size = 0;
+            if (file.name.endsWith("--refreshing")) {
+                let refreshingStarted;
                 try {
-                    const statMeta = await fs.stat(file.path);
-                    size += statMeta.size;
-                    if (meta.body) {
-                        const statContent = await fs.stat(meta.body);
-                        size += statContent.size;
-                    }
+                    refreshingStarted = parseInt(await fs.readFile(file.path, "utf-8"));
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 } catch (err: any) {
                     if (err.code === "ENOENT") {
@@ -120,8 +100,62 @@ export class FilesystemCacheBackend implements CacheBackend {
                         throw err;
                     }
                 }
-                sumSize += size;
-                entries.push({ name: file.name, size, mtime: meta.mtime });
+                if (new Date().getTime() - refreshingStarted > 60 * 1000) {
+                    //refreshing started more than 60 seconds ago, so it's probably finished
+                    try {
+                        await fs.unlink(file.path);
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    } catch (err: any) {
+                        if (err.code === "ENOENT") {
+                            // No Entity; file does not exist (can happen in race conditions where other request/process deleted the file)
+                            // continue with next file
+                            continue;
+                        } else {
+                            throw err;
+                        }
+                    }
+                }
+            } else {
+                //standard cache meta file
+                let meta;
+                try {
+                    meta = await fs.readFile(file.path, "utf-8");
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                } catch (err: any) {
+                    if (err.code === "ENOENT") {
+                        // No Entity; file does not exist (can happen in race conditions where other request/process deleted the file)
+                        // continue with next file
+                        continue;
+                    } else {
+                        throw err;
+                    }
+                }
+                meta = JSON.parse(meta);
+                if (meta.mtime + meta.maxAge < new Date().getTime()) {
+                    stats.deletedOutdated++;
+                    await this.deleteCacheFile(file.name);
+                } else {
+                    let size = 0;
+                    try {
+                        const statMeta = await fs.stat(file.path);
+                        size += statMeta.size;
+                        if (meta.body) {
+                            const statContent = await fs.stat(meta.body);
+                            size += statContent.size;
+                        }
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    } catch (err: any) {
+                        if (err.code === "ENOENT") {
+                            // No Entity; file does not exist (can happen in race conditions where other request/process deleted the file)
+                            // continue with next file
+                            continue;
+                        } else {
+                            throw err;
+                        }
+                    }
+                    sumSize += size;
+                    entries.push({ name: file.name, size, mtime: meta.mtime });
+                }
             }
         }
         entries = entries.sort((a, b) => b.mtime - a.mtime); // oldest last
@@ -202,6 +236,19 @@ export class FilesystemCacheBackend implements CacheBackend {
         //then rename the tempFile to the actual cache file (=atomic operation)
         await fs.rename(tempFile, cacheFilePath);
 
+        //delete refreshing file, if there is any
+        try {
+            await fs.unlink(`${cacheFilePath}--refreshing`);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } catch (err: any) {
+            if (err.code === "ENOENT") {
+                // No Entity; file does not exist (can happen in race conditions where other request/process deleted the file)
+                // ignore error
+            } else {
+                throw err;
+            }
+        }
+
         //after writing new meta file, delete all other (old) body files
         let dir: fs.Dir;
         try {
@@ -216,7 +263,6 @@ export class FilesystemCacheBackend implements CacheBackend {
                 throw err;
             }
         }
-
         for await (const file of dir) {
             if (file.path !== bodyFile) {
                 try {
@@ -289,6 +335,32 @@ export class FilesystemCacheBackend implements CacheBackend {
             } else {
                 throw err;
             }
+        }
+    }
+    async startRefreshing(key: string): Promise<void> {
+        const cacheFilePath = path.join(this.cacheDir, encodeURIComponent(key));
+        await fs.writeFile(`${cacheFilePath}--refreshing`, new Date().getTime().toString());
+    }
+
+    async isRefreshing(key: string): Promise<boolean> {
+        const cacheFilePath = path.join(this.cacheDir, encodeURIComponent(key));
+        let refreshingStarted;
+        try {
+            refreshingStarted = parseInt(await fs.readFile(`${cacheFilePath}--refreshing`, "utf-8"));
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } catch (err: any) {
+            if (err.code === "ENOENT") {
+                // No Entity; file does not exist (catch error instead of calling exists before readFile to avoid race conditions)
+                return false;
+            } else {
+                throw err;
+            }
+        }
+        if (new Date().getTime() - refreshingStarted > 60 * 1000) {
+            //refreshing started more than 60 seconds ago, process crashed or something, ignore it
+            return false;
+        } else {
+            return true;
         }
     }
 }
