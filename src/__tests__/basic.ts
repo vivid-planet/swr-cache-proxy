@@ -319,4 +319,10 @@ describe("Proxy Server E2E Tests", () => {
         expect(res.status).toBe(200);
         expect(res.header["via"]).toBe("foo, swr-cache-proxy");
     });
+
+    it("liveness probe should work", async () => {
+        const res = await request(`http://localhost:${proxyServerPort}`).get("/.well-known/liveness");
+        expect(res.status).toBe(200);
+        expect(res.text).toBe("OK");
+    });
 });
