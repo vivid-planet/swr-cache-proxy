@@ -10,7 +10,8 @@
         "lint:tsc": "tsc --noEmit",
         "postinstall": "husky install",
         "test": "jest",
-        "test:watch": "jest --watch"
+        "test:watch": "jest --watch",
+        "start": "node dist/index.js $ORIGIN_URL --port $PORT --cacheSizeLimitHint $CACHE_SIZE_LIMIT_HINT --cacheDir $CACHE_DIR"
     },
     "dependencies": {
         "commander": "^11.0.0",
