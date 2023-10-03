@@ -89,6 +89,13 @@ export function normalizedAcceptEncoding(req: IncomingMessage): string | undefin
 }
 
 export async function handleRequest(req: IncomingMessage, res: ServerResponse, { origin, cache }: Options) {
+    // LivenessProbe for Kubernetes
+    if (req.url === "/.well-known/liveness") {
+        res.write("OK");
+        res.end();
+        return;
+    }
+
     if (req.headers["authorization"]) {
         res.statusCode = 500;
         res.write("authorization header not allowed");
