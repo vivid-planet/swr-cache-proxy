@@ -43,7 +43,7 @@ beforeEach(async () => {
     {
         await fs.emptyDir("cache");
 
-        proxyServer = spawn("node", ["./dist/index.js", "--port", String(proxyServerPort), `http://localhost:${testOriginServerPort}`], {
+        proxyServer = spawn("node", ["./dist/index.js", "--port", String(proxyServerPort), "--origin", `http://localhost:${testOriginServerPort}`], {
             stdio: "inherit",
         });
 
