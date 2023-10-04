@@ -10,7 +10,8 @@
         "lint:tsc": "tsc --noEmit",
         "postinstall": "husky install",
         "test": "jest",
-        "test:watch": "jest --watch"
+        "test:watch": "jest --watch",
+        "start": "node dist/index.js"
     },
     "dependencies": {
         "commander": "^11.0.0",
