@@ -28,7 +28,7 @@ export function parseMeta(res: Response): CacheMeta | null {
     if (!cacheControl) {
         return null;
     }
-    const maxAgeMatch = cacheControl.match(/max-age=(\d+)/);
+    const maxAgeMatch = cacheControl.match(/(max-age|s-maxage)=(\d+)/);
     if (!maxAgeMatch) {
         return null;
     }
@@ -36,7 +36,7 @@ export function parseMeta(res: Response): CacheMeta | null {
     const status = res.status;
     const headers = convertHeadersToObject(res.headers);
 
-    const maxAge = parseInt(maxAgeMatch[1], 10) * 1000;
+    const maxAge = parseInt(maxAgeMatch[2], 10) * 1000;
     const staleWhileRevalidateMatch = cacheControl.match(/stale-while-revalidate=(\d+)/);
     if (!staleWhileRevalidateMatch) {
         return { maxAge, headers, status };
