@@ -39,7 +39,7 @@ spec:
               protocol: TCP
           env:
             - name: "ORIGIN_URL"
-              value: "{{ .Values.swrCacheProxy.originUrl }}}"
+              value: "{{ .Values.swrCacheProxy.originUrl }}"
             - name: "CACHE_DIR"
               value: "/mnt/cache"
           livenessProbe:
