@@ -325,4 +325,20 @@ describe("Proxy Server E2E Tests", () => {
         expect(res.status).toBe(200);
         expect(res.text).toBe("OK");
     });
+
+    it("cacheable with max-age but without stale-while-revalidate should not cache", async () => {
+        {
+            const res = await request(`http://localhost:${proxyServerPort}`).get("/no-swr");
+            expect(res.status).toBe(200);
+            expect(res.text).toBe("0");
+            expect(res.header["x-cache"]).toBe("BYPASS");
+        }
+        await timeout(100);
+        {
+            const res = await request(`http://localhost:${proxyServerPort}`).get("/no-swr");
+            expect(res.status).toBe(200);
+            expect(res.text).toBe("1");
+            expect(res.header["x-cache"]).toBe("BYPASS");
+        }
+    });
 });
