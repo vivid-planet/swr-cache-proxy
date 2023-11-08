@@ -180,11 +180,11 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse, {
 
         // Cache the response
         const meta = parseMeta(response);
-        if (meta) {
-            //if null it's uncachable
+        if (meta && meta.staleWhileRevalidate) {
             cache.set(cacheKey, body2, meta); //don't await
             res.appendHeader("X-Cache", "MISS");
         } else {
+            //if null it's uncachable, if no swr header also don't cache
             res.appendHeader("X-Cache", "BYPASS");
         }
 
