@@ -6,7 +6,7 @@ metadata:
     {{- include "swr-cache-proxy.labels" . | nindent 4 }}
 data:
   ORIGIN_URL: "{{ .Values.swrCacheProxy.originUrl }}"
-  CACHE_DIR: "/mnt/cache"
+  CACHE_DIR: "{{ .Values.swrCacheProxy.cacheDir }}"
   {{- range $key, $val := .Values.env }}
   {{ $key }}: {{ $val | quote }}
   {{- end }}
