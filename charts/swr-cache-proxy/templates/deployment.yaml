@@ -37,11 +37,11 @@ spec:
             - name: http
               containerPort: 3000
               protocol: TCP
-          env:
-            - name: "ORIGIN_URL"
-              value: "{{ .Values.swrCacheProxy.originUrl }}"
-            - name: "CACHE_DIR"
-              value: "/mnt/cache"
+          envFrom:
+            - configMapRef:
+                name: {{ include "swr-cache-proxy.fullname" . }}
+            - secretRef:
+                name: {{ include "swr-cache-proxy.fullname" . }}
           livenessProbe:
             httpGet:
               path: /.well-known/liveness
