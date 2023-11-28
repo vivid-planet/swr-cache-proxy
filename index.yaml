@@ -3,6 +3,16 @@ entries:
   swr-cache-proxy:
   - apiVersion: v2
     appVersion: 1.0.0
+    created: "2023-11-28T07:32:10.180928122Z"
+    description: A Helm chart for Kubernetes
+    digest: 1919f976ddbf4e8ab5ea28bdc50c233fa120a4801f5c377de3d6143ff3783d51
+    name: swr-cache-proxy
+    type: application
+    urls:
+    - https://github.com/vivid-planet/swr-cache-proxy/releases/download/swr-cache-proxy-0.2.0/swr-cache-proxy-0.2.0.tgz
+    version: 0.2.0
+  - apiVersion: v2
+    appVersion: 1.0.0
     created: "2023-11-08T09:47:07.693041102Z"
     description: A Helm chart for Kubernetes
     digest: 5ff5eb2efd186d7d7eaddf608404e752916b493413b13fc26fd02a146c353305
@@ -21,4 +31,4 @@ entries:
     urls:
     - https://github.com/vivid-planet/swr-cache-proxy/releases/download/swr-cache-proxy-0.1.0/swr-cache-proxy-0.1.0.tgz
     version: 0.1.0
-generated: "2023-11-08T09:47:07.693048802Z"
+generated: "2023-11-28T07:32:10.180945795Z"
