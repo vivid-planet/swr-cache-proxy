@@ -11,7 +11,7 @@ jobs:
         runs-on: ubuntu-latest
         env:
             IMAGE_NAME: "vividplanet/swr-cache-proxy"
-            TAGS: "v1"
+            TAGS: $(yq e '.appVersion' charts/swr-cache-proxy/Chart.yaml)
         steps:
             - run: echo "${{ github.actor }}"
 
