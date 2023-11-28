@@ -88,3 +88,7 @@ pvc:
 
 swrCacheProxy:
   originUrl: "" # replace with your origin url
+  cacheDir: "/mnt/cache"
+
+env:
+  CACHE_SIZE_LIMIT_HINT: "1000" # Size in Megabytes => 1 GB
